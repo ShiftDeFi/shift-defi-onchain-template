@@ -1,0 +1,92 @@
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.0;
+
+import {CurveAdapterBase} from "test/ethereum/CurveAdapterBase.t.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
+contract CurveAdapterTest is CurveAdapterBase {
+    using SafeERC20 for IERC20;
+
+    function setUp() public override {
+        super.setUp();
+    }
+
+    function _whitelistPath(
+        address tokenIn,
+        address tokenOut,
+        address[11] memory route,
+        uint256[5][5] memory swapParams,
+        address[5] memory pools
+    ) private {
+        vm.prank(roles.whitelistManager);
+        curveAdapter.whitelistPath(tokenIn, tokenOut, route, swapParams, pools);
+        assertTrue(curveAdapter.whitelistedPaths(tokenIn, tokenOut, route, swapParams, pools));
+    }
+
+    function testFuzz_WhitelistPath(
+        address tokenIn,
+        address tokenOut,
+        address[11] memory route,
+        uint256[5][5] memory swapParams,
+        address[5] memory pools
+    ) public {
+        assertFalse(curveAdapter.whitelistedPaths(tokenIn, tokenOut, route, swapParams, pools));
+        _whitelistPath(tokenIn, tokenOut, route, swapParams, pools);
+    }
+
+    function testFuzz_BlacklistPath(
+        address tokenIn,
+        address tokenOut,
+        address[11] memory route,
+        uint256[5][5] memory swapParams,
+        address[5] memory pools
+    ) public {
+        _whitelistPath(tokenIn, tokenOut, route, swapParams, pools);
+
+        vm.prank(roles.whitelistManager);
+        curveAdapter.blacklistPath(tokenIn, tokenOut, route, swapParams, pools);
+        assertFalse(curveAdapter.whitelistedPaths(tokenIn, tokenOut, route, swapParams, pools));
+    }
+
+    function test_Swap() public {
+        uint256 amountIn = 1 ether;
+        deal(WETH, address(this), amountIn);
+        address[11] memory route = [
+            WETH,
+            CURVE_TRICRYPTO_OPTIMIZED_WETH,
+            CRVUSD,
+            SUSDE_CRVUSD_POOL,
+            SUSDE,
+            address(0),
+            address(0),
+            address(0),
+            address(0),
+            address(0),
+            address(0)
+        ];
+        address[5] memory pools = [
+            CURVE_TRICRYPTO_OPTIMIZED_WETH,
+            SUSDE_CRVUSD_POOL,
+            address(0),
+            address(0),
+            address(0)
+        ];
+        uint256[5][5] memory swapParams = [
+            [uint256(1), 0, 1, 30, 3],
+            [uint256(0), 1, 1, 10, 2],
+            [uint256(0), 0, 0, 0, 0],
+            [uint256(0), 0, 0, 0, 0],
+            [uint256(0), 0, 0, 0, 0]
+        ];
+
+        _whitelistPath(WETH, SUSDE, route, swapParams, pools);
+
+        IERC20(WETH).forceApprove(address(curveAdapter), amountIn);
+
+        uint256 balanceBefore = IERC20(SUSDE).balanceOf(address(this));
+        curveAdapter.swap(WETH, SUSDE, amountIn, 0, address(this), abi.encode(route, swapParams, pools));
+        uint256 balanceAfter = IERC20(SUSDE).balanceOf(address(this));
+        assertGt(balanceAfter, balanceBefore);
+    }
+}
